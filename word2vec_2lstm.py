@@ -42,7 +42,7 @@ from sklearn.linear_model import LogisticRegression
 
 
 
-def vectorise(texts, w2v_model, max_length=40):
+def vectorise(texts, w2v_model, max_length):
     vector_size = w2v_model.vector_size
     texts_vec = []
 
@@ -74,9 +74,13 @@ def vectorise(texts, w2v_model, max_length=40):
 def process_strings(strings):
     returned = []
     for case in strings:
+        if not isinstance(case, str):  # 检查case是否为字符串
+            case = str(case)  # 不是字符串时转换为字符串
         case = re.sub(r'\[[0-9, ]*\]', '', case)
         case = re.sub(r'^...', '... ', case)
         case = word_tokenize(case.lower())
+        if not case:
+            case = [' ']
         returned.append(case)
     return returned
 
@@ -122,12 +126,12 @@ def parse_index2label(index):
             label.append("comparison")
     return label
 
-def create_lstm_model():
+def create_lstm_model(n1,n2):
     model = Sequential()
     #model.add(LSTM(128, input_shape=(33, 100), dropout=0.3, recurrent_dropout=0.3))
-    model.add(Bidirectional(LSTM(64,dropout=0.3, recurrent_dropout=0.3), input_shape=(40, 100)))
+    model.add(Bidirectional(LSTM(128,dropout=0.3, recurrent_dropout=0.3), input_shape=(2*(n1+n2), 100)))
     # 其他层...
-    #model.add(Dense(32, activation='relu'))
+    model.add(Dense(32, activation='relu'))
     #model.add(Dense(16, activation='relu'))
     #model.add(Dense(8, activation='relu'))
     model.add(Dense(3, activation='softmax'))
@@ -172,43 +176,60 @@ class F1ScoreCallback(Callback):
         plt.show()
 
 def main():
+    word2vec_model = Word2Vec.load('C:/Users/liwei/Desktop/CS4248/word2vec_model.bin')
+    
     sectionNames, strings, labels, label_confidence, isKeyCitation = [], [], [], [], []
     with jsonlines.open('C:/Users/liwei/Desktop/CS4248/train.jsonl') as f:
         for line in f.iter():
-            # sectionNames.append(line['sectionName'])  #handle NaN?
+            sectionNames.append(line['sectionName'])  #handle NaN?
             strings.append(re.sub(r'\n', '. ', line['string']))
             labels.append(line['label'])
             # label_confidence.append(line['label_confidence']) #use?
             # isKeyCitation.append(line['isKeyCitation']) #use?
     strings = process_strings(strings)
+    sectionNames = process_strings(sectionNames)
     y_train = parse_label2index(labels)
-
-    word2vec_model = Word2Vec.load('word2vec_model.bin')
-   
-    x_train = vectorise(strings, word2vec_model)
+    
+    n1=33
+    n2=2
+    #x_train = vectorise(strings, word2vec_model,n1)
+    X_train = np.concatenate([vectorise(strings, word2vec_model,n1), vectorise(sectionNames, word2vec_model,n2)], axis=1)
     y_train = parse_label2index(labels)
     y_train = np.array(y_train)
+    
+    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
+    
+   # from imblearn.over_sampling import SMOTE
+    # 假设 X 的形状是 (样本数, 时间步长, 特征数)
+   # n_samples,  n_features, n_time_steps, =X_train.shape
+   # X_reshaped = X_train.reshape(n_samples,  n_features *n_time_steps)
+    # 使用 SMOTE 进行上采样
+   # sm = SMOTE(random_state=42)
+   # X_resampled, y_train = sm.fit_resample(X_reshaped, y_train)
+    # 将上采样后的数据重塑回原来的三维格式
+    #X_train= X_resampled.reshape(-1, n_features, n_time_steps)
+    
+
+
+    model = create_lstm_model(n1,n2)
+    f1_callback = F1ScoreCallback(train_data=(X_train, y_train), val_data=(X_val, y_val))
+    model.fit(X_train, y_train, epochs=20, batch_size=32,callbacks=[f1_callback])#callbacks=[f1_callback]
+    
     
     sectionNames, strings, labels = [], [], []
     with jsonlines.open('C:/Users/liwei/Desktop/CS4248/test.jsonl') as f:
         for line in f.iter():
-            # sectionNames.append(line['sectionName'])
+            sectionNames.append(line['sectionName'])
             strings.append(re.sub(r'\n', '. ', line['string']))
             labels.append(line['label'])
     strings = process_strings(strings)
-
-    x_test = vectorise(strings, word2vec_model)
+    sectionNames = process_strings(sectionNames)
+    
+   # x_test = vectorise(strings, word2vec_model,n1)
+    x_test = np.concatenate([vectorise(strings, word2vec_model,n1), vectorise(sectionNames, word2vec_model,n2)], axis=1)
     y_test = parse_label2index(labels)
     y_test = np.array(y_test)
     
-   
-    X_train, X_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.03, random_state=42)
-
-
-    model = create_lstm_model()
-    f1_callback = F1ScoreCallback(train_data=(X_train, y_train), val_data=(X_val, y_val))
-    model.fit(X_train, y_train, epochs=50, batch_size=32,callbacks=[f1_callback])#callbacks=[f1_callback]
-
 
     y_test_pred = np.argmax(model.predict(x_test), axis=-1)
     macro_f1_score = f1_score(y_test, y_test_pred, average='macro')
