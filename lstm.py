@@ -12,6 +12,7 @@ from gensim.models import Word2Vec
 import numpy as np
 import re
 import jsonlines
+import collections
 
 from gensim.models import Word2Vec
 from nltk.tokenize import word_tokenize
@@ -48,24 +49,28 @@ def vectorise(texts, w2v_model, max_length=40):
     return np.array(texts_vec)
 
 def process_strings(strings):
-    strings_clean, num_citations = [], []
+    strings_clean, num_citations, length = [], [], []
+    l = collections.defaultdict(int)
     for case in strings:
-        case = re.sub(r'\[[0-9, ]*\]', '', case)
+        # case = re.sub(r'\[[0-9, ]*\]', '', case)
         case = re.sub(r'^...', '... ', case)
         open = False
         n = 0
         for c in case:
-            if c == '(':
+            if (c == '(') or (c == '['):
                 open = True
                 n += 1
-            elif c == ')':
+            elif (c == ')') or (c == ']'):
                 open = False
             if (c == ';') and (open == True):
                 n += 1
         case = word_tokenize(case.lower())
+        length.append(len(case))
+        l[len(case)] += 1
         strings_clean.append(case)
         num_citations.append(n)
-    return strings_clean, num_citations
+    print(sorted(l.items()))
+    return strings_clean, num_citations, length
 
 sec_name_mapping = {"discussion": 0, "introduction": 1, "unspecified": 2, "method": 3,
                     "results": 4, "experiment": 5, "background": 6, "implementation": 7,
@@ -172,34 +177,60 @@ class F1ScoreCallback(Callback):
         plt.legend()
         plt.show()
 
+def length_category_score(y_test, y_test_pred, length):
+    short_y_test, short_y_test_pred = [], []  # <= 30 tokens
+    med_y_test, med_y_test_pred = [], []      # > 30 and <= 80 tokens 
+    long_y_test, long_y_test_pred = [], []    # > 80 tokens
+    for i in range(len(y_test)):
+        if length[i] <= 30:
+            short_y_test.append(y_test[i])
+            short_y_test_pred.append(y_test_pred[i])
+        elif length[i] <= 80:
+            med_y_test.append(y_test[i])
+            med_y_test_pred.append(y_test_pred[i])
+        else:
+            long_y_test.append(y_test[i])
+            long_y_test_pred.append(y_test_pred[i])
+    print("fi macro score for short strings: ", f1_score(short_y_test, short_y_test_pred, average='macro'))
+    print("fi macro score for med strings: ", f1_score(med_y_test, med_y_test_pred, average='macro'))
+    print("fi macro score for long strings: ", f1_score(long_y_test, long_y_test_pred, average='macro'))
+
 def main():
-    sectionNames, strings, labels, = [], [], []
+    sectionNames, strings, labels, labels_confidence = [], [], [], []
     with jsonlines.open('scicite/train.jsonl') as f:
         for line in f.iter():
             sectionNames.append(line['sectionName'])
             strings.append(re.sub(r'\n', '. ', line['string']))
             labels.append(line['label'])
-    strings, num_citations = process_strings(strings)
+            if 'label_confidence' in line:
+                labels_confidence.append(line['label_confidence'])  #3 only need in training model in combination with label
+            else:
+                labels_confidence.append(0)
+    strings, num_citations, length = process_strings(strings)   #2 both train & test
 
     word2vec_model = Word2Vec(sentences=strings, vector_size=100, window=5, min_count=1)
     word2vec_model.save('word2vec_model.bin')
     word2vec_model = Word2Vec.load('word2vec_model.bin')
    
     x_train = vectorise(strings, word2vec_model)
-    sectionNames = process_sectionNames(sectionNames)
+    sectionNames = process_sectionNames(sectionNames)   #1 both train & test
     y_train = parse_label2index(labels)
     y_train = np.array(y_train)
     
-    sectionNames, strings, labels = [], [], []
+    sectionNames, strings, labels, labels_confidence = [], [], [], []
     with jsonlines.open('scicite/dev.jsonl') as f:
         for line in f.iter():
             sectionNames.append(line['sectionName'])
             strings.append(re.sub(r'\n', '. ', line['string']))
             labels.append(line['label'])
-    strings, num_citations = process_strings(strings)
+            if 'label_confidence' in line:
+                labels_confidence.append(line['label_confidence'])  #3 
+            else:
+                labels_confidence.append(0)
+    strings, num_citations, length = process_strings(strings)       #2
 
     x_val = vectorise(strings, word2vec_model)
-    sectionNames = process_sectionNames(sectionNames)
+    sectionNames = process_sectionNames(sectionNames)               #1
     y_val = parse_label2index(labels)
     y_val = np.array(y_val)
 
@@ -213,10 +244,10 @@ def main():
             sectionNames.append(line['sectionName'])
             strings.append(re.sub(r'\n', '. ', line['string']))
             labels.append(line['label'])
-    strings, num_citations = process_strings(strings)
+    strings, num_citations, length = process_strings(strings)  #2
 
     x_test = vectorise(strings, word2vec_model)
-    sectionNames = process_sectionNames(sectionNames)
+    sectionNames = process_sectionNames(sectionNames)          #1
     y_test = parse_label2index(labels)
     y_test = np.array(y_test)
 
@@ -225,6 +256,7 @@ def main():
     print(macro_f1_score)
     report = classification_report(y_test, y_test_pred)
     print(report)
+    length_category_score(y_test, y_test_pred, length)
 
 if __name__ == "__main__":
     main()
