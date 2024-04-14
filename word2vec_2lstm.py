@@ -6,8 +6,6 @@ Created on Sun Apr  7 04:33:09 2024
 """
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Bidirectional
-import pandas as pd
-import numpy as np
 from gensim.models import KeyedVectors  
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report
@@ -31,15 +29,15 @@ import numpy as np
 import pandas as pd
 import re
 import jsonlines
-
 from gensim.models import Word2Vec
 from gensim.models.doc2vec import Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 from nltk.tokenize import word_tokenize
-
 from sklearn.metrics import f1_score, accuracy_score
 from sklearn.linear_model import LogisticRegression
-
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, LSTM, Dense, Bidirectional, Concatenate, Dropout
+from tensorflow.keras.optimizers import Adam
 
 
 def vectorise(texts, w2v_model, max_length):
@@ -67,9 +65,8 @@ def vectorise(texts, w2v_model, max_length):
         # 将句子的词向量列表添加到结果列表中
         texts_vec.append(sentence_vectors)
 
-    # 将列表转换为三维 NumPy 数组
-    # 结果形状为 (句子数量, max_length, vector_size)
     return np.array(texts_vec)
+
 
 def process_strings(strings):
     returned = []
@@ -84,89 +81,107 @@ def process_strings(strings):
         returned.append(case)
     return returned
 
-def process_names(sectionNames):
-    returned = []
-    for case in sectionNames:
-        print(case)
-        case = case.lower()
-        case = re.sub(r'^[0-9.]{2,}', '', case)
-        returned.append(case)
-    return returned
+def preprocess_sectionName(sectionName):
+    sectionName = str(sectionName)
+    newSectionName = sectionName.lower()
 
-def train(model, x_train, y_train):
-    model = model.fit(x_train, y_train)
+    if newSectionName != None:
+        if "introduction" in newSectionName or "preliminaries" in newSectionName:
+            newSectionName = "introduction"
+        elif "result" in newSectionName or "finding" in newSectionName:
+            newSectionName = "results"
+        elif "method" in newSectionName or "approach" in newSectionName:
+            newSectionName = "method"
+        elif "discussion" in newSectionName:
+            newSectionName = "discussion"
+        elif "background" in newSectionName:
+            newSectionName = "background"
+        elif "experiment" in newSectionName or "setup" in newSectionName or "set-up" in newSectionName or "set up" in newSectionName:
+            newSectionName = "experiment"
+        elif "related work" in newSectionName or "relatedwork" in newSectionName or "prior work" in newSectionName or "literature review" in newSectionName:
+            newSectionName = "related work"
+        elif "evaluation" in newSectionName:
+            newSectionName = "evaluation"
+        elif "implementation" in newSectionName:
+            newSectionName = "implementation"
+        elif "conclusion" in newSectionName:
+            newSectionName = "conclusion"
+        elif "limitation" in newSectionName:
+            newSectionName = "limitation"
+        elif "appendix" in newSectionName:
+            newSectionName = "appendix"
+        elif "future work" in newSectionName or "extension" in newSectionName:
+            newSectionName = "appendix"
+        elif "analysis" in newSectionName:
+            newSectionName = "analysis"
+        else:
+            newSectionName = "unspecified"
 
-def predict(model, x_test):
-    return model.predict(x_test)
+        return newSectionName
 
-def evaluate(y_test, y_pred):
-    score = f1_score(y_test, y_pred, average='macro')
-    print('f1 score = {}'.format(score))
-    print('accuracy = %s' % accuracy_score(y_test, y_pred))
 
-def parse_label2index(label):
+
+def parse_label2index(labels):
     index = []
-    for i in range(len(label)):
-        if label[i] == "background":
+    for i in range(len(labels)):
+        label = labels.iloc[i]  # 使用 iloc 获取第i个元素
+        if label == "background":
             index.append(0)
-        elif label[i] == "method":
+        elif label == "method":
             index.append(1)
-        else: # label[i] == "result"
+        else:  # 假设只有三种情况，第三种是 "result"
             index.append(2)
     return index
 
-def parse_index2label(index):
-    label = []
-    for i in range(len(index)):
-        if index[i] == 0:
-            label.append("background")
-        elif index[i] == 1:
-            label.append("method")
-        else: # index[i] == 2
-            label.append("comparison")
-    return label
 
-def create_lstm_model(n1,n2):
-    model = Sequential()
-    #model.add(LSTM(128, input_shape=(33, 100), dropout=0.3, recurrent_dropout=0.3))
-    model.add(Bidirectional(LSTM(128,dropout=0.3, recurrent_dropout=0.3), input_shape=(2*(n1+n2), 100)))
-    # 其他层...
-    model.add(Dense(32, activation='relu'))
-    #model.add(Dense(16, activation='relu'))
-    #model.add(Dense(8, activation='relu'))
-    model.add(Dense(3, activation='softmax'))
-    
+
+def create_lstm_model(n1, n2, vector_size):
+    # 文本输入（经过Word2Vec处理后的输入）
+    text_input = Input(shape=(n1, vector_size), name='text_input')
+    lstm_out = Bidirectional(LSTM(64, dropout=0.2, recurrent_dropout=0.2))(text_input)
+
+    # 分类输入（经过get_dummies处理的section names）
+    section_input = Input(shape=(n2,), name='section_input')  # n2是get_dummies之后的列数
+
+    # 合并两个输入
+    concatenated = Concatenate()([lstm_out, section_input])
+
+    # 全连接层
+    dense1 = Dense(16, activation='relu')(concatenated)
+    output = Dense(3, activation='softmax')(dense1)  # 假设有三个分类输出
+
+    # 构建并编译模型
+    model = Model(inputs=[text_input, section_input], outputs=output)
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
     return model
+
 class F1ScoreCallback(Callback):
     def __init__(self, train_data, val_data):
-        super(F1ScoreCallback, self).__init__()
+        super(F1ScoreCallback, self).__init__()  # 确保正确调用超类的构造函数
         self.train_data = train_data
         self.val_data = val_data
-        self.train_f1_scores = []
-        self.val_f1_scores = []
+        self.train_f1_scores = []  # 初始化用于存储训练集F1分数的列表
+        self.val_f1_scores = []  # 初始化用于存储验证集F1分数的列表
 
     def on_epoch_end(self, epoch, logs=None):
         X_train, y_train = self.train_data
         X_val, y_val = self.val_data
-    
-    # Predict classes with the model
-        y_train_pred = np.argmax(self.model.predict(X_train), axis=-1)
-        y_val_pred = np.argmax(self.model.predict(X_val), axis=-1)
+        
+        # 预测
+        y_train_pred = np.argmax(self.model.predict([X_train[0], X_train[1]]), axis=-1)
+        y_val_pred = np.argmax(self.model.predict([X_val[0], X_val[1]]), axis=-1)
 
-    # Calculate F1 scores
+        # 计算并存储F1分数
         train_f1 = f1_score(y_train, y_train_pred, average='macro')
         val_f1 = f1_score(y_val, y_val_pred, average='macro')
-    
-    # Append the F1 scores to the lists
         self.train_f1_scores.append(train_f1)
         self.val_f1_scores.append(val_f1)
-    
-    # Print the scores
+        
         print(f'Epoch {epoch+1} - train F1: {train_f1:.4f}, val F1: {val_f1:.4f}')
 
     def on_train_end(self, logs=None):
-        # 绘制F1分数变化趋势图
+        # 绘制训练过程中F1分数的趋势
         plt.plot(self.train_f1_scores, label='Train F1')
         plt.plot(self.val_f1_scores, label='Validation F1')
         plt.title('F1 Score Trend')
@@ -177,61 +192,93 @@ class F1ScoreCallback(Callback):
 
 def main():
     word2vec_model = Word2Vec.load('C:/Users/liwei/Desktop/CS4248/word2vec_model.bin')
+        
+    import json
+    import pandas as pd
+    import json
+
+    with open('C:/Users/liwei/Desktop/CS4248/train.jsonl', 'r', encoding='utf-8') as f:
+        train_data = [json.loads(line) for line in f]
+    Df_train = pd.DataFrame(train_data)
+
+
+    with open('C:/Users/liwei/Desktop/CS4248/test.jsonl', 'r', encoding='utf-8') as f:
+        test_data = [json.loads(line) for line in f]
+    Df_test = pd.DataFrame(test_data)
     
-    sectionNames, strings, labels, label_confidence, isKeyCitation = [], [], [], [], []
-    with jsonlines.open('C:/Users/liwei/Desktop/CS4248/train.jsonl') as f:
-        for line in f.iter():
-            sectionNames.append(line['sectionName'])  #handle NaN?
-            strings.append(re.sub(r'\n', '. ', line['string']))
-            labels.append(line['label'])
-            # label_confidence.append(line['label_confidence']) #use?
-            # isKeyCitation.append(line['isKeyCitation']) #use?
-    strings = process_strings(strings)
-    sectionNames = process_strings(sectionNames)
-    y_train = parse_label2index(labels)
+    df_train = Df_train[['string', 'sectionName', 'label','label_confidence','isKeyCitation']]
+    df_test = Df_test[['string', 'sectionName', 'label','label_confidence','isKeyCitation']]
     
-    n1=33
-    n2=2
-    #x_train = vectorise(strings, word2vec_model,n1)
-    X_train = np.concatenate([vectorise(strings, word2vec_model,n1), vectorise(sectionNames, word2vec_model,n2)], axis=1)
-    y_train = parse_label2index(labels)
+    #df_train = df_train.dropna(subset=['label_confidence'])#, 'isKeyCitation'
+    
+    all_categories = [
+    "introduction", "results", "method", "discussion", "background", 
+    "experiment", "related work", "evaluation", "implementation", 
+    "conclusion", "limitation", "appendix", "analysis", "unspecified"
+    ]
+    
+    X_train_strings = process_strings(df_train['string'])
+    n1 = 33
+    X_train = vectorise(X_train_strings, word2vec_model,n1)
+    
+    
+    X_train_sectionName = df_train['sectionName'].apply(preprocess_sectionName)
+    X_train_sectionName = pd.get_dummies(X_train_sectionName)
+    X_train_sectionName = X_train_sectionName.reindex(columns=all_categories, fill_value=0)
+    X_train_sectionName = X_train_sectionName.astype(int)
+    X_train_sectionName = np.array(X_train_sectionName)
+    
+    X_train_label_confidence = np.array(df_train['label_confidence'])
+    
+    X_train_isKeyCitation = pd.get_dummies(df_train['isKeyCitation'])
+    X_train_isKeyCitation = X_train_isKeyCitation.astype(int)
+    X_train_isKeyCitation = np.array(X_train_isKeyCitation)
+    X_train_isKeyCitation =  X_train_isKeyCitation[:,0]
+    
+    X_train_isKeyCitation = X_train_isKeyCitation.reshape(-1, 1)
+    X_train_label_confidence = X_train_label_confidence.reshape(-1, 1)
+    
+    X_train_other =X_train_sectionName# np.hstack((X_train_sectionName))#,  X_train_isKeyCitation,X_train_label_confidence
+    
+    y_train = parse_label2index(df_train['label'])
     y_train = np.array(y_train)
     
-    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
-    
-   # from imblearn.over_sampling import SMOTE
-    # 假设 X 的形状是 (样本数, 时间步长, 特征数)
-   # n_samples,  n_features, n_time_steps, =X_train.shape
-   # X_reshaped = X_train.reshape(n_samples,  n_features *n_time_steps)
-    # 使用 SMOTE 进行上采样
-   # sm = SMOTE(random_state=42)
-   # X_resampled, y_train = sm.fit_resample(X_reshaped, y_train)
-    # 将上采样后的数据重塑回原来的三维格式
-    #X_train= X_resampled.reshape(-1, n_features, n_time_steps)
-    
+    X_train, X_val,X_train_other,X_val_other, y_train, y_val = train_test_split(X_train, X_train_other,y_train, test_size=0.1, random_state=42)    
 
-
-    model = create_lstm_model(n1,n2)
-    f1_callback = F1ScoreCallback(train_data=(X_train, y_train), val_data=(X_val, y_val))
-    model.fit(X_train, y_train, epochs=20, batch_size=32,callbacks=[f1_callback])#callbacks=[f1_callback]
+    model = create_lstm_model(n1, X_train_other.shape[1], 100)  # 假设Word2Vec的向量大小为100
+    f1_callback = F1ScoreCallback(train_data=([X_train, X_train_other],y_train), val_data=([X_val, X_val_other],y_val))
+    model.fit([X_train, X_train_other], y_train, epochs=20, batch_size=32, callbacks=[f1_callback])
     
     
-    sectionNames, strings, labels = [], [], []
-    with jsonlines.open('C:/Users/liwei/Desktop/CS4248/test.jsonl') as f:
-        for line in f.iter():
-            sectionNames.append(line['sectionName'])
-            strings.append(re.sub(r'\n', '. ', line['string']))
-            labels.append(line['label'])
-    strings = process_strings(strings)
-    sectionNames = process_strings(sectionNames)
+    X_test_strings = process_strings(df_test['string'])
+    n1 = 33
+    X_test = vectorise(X_test_strings, word2vec_model,n1)
     
-   # x_test = vectorise(strings, word2vec_model,n1)
-    x_test = np.concatenate([vectorise(strings, word2vec_model,n1), vectorise(sectionNames, word2vec_model,n2)], axis=1)
-    y_test = parse_label2index(labels)
+    
+    X_test_sectionName = df_test['sectionName'].apply(preprocess_sectionName)
+    X_test_sectionName = pd.get_dummies(X_test_sectionName)
+    X_test_sectionName = X_test_sectionName.reindex(columns=all_categories, fill_value=0)
+    X_test_sectionName = X_test_sectionName.astype(int)
+    X_test_sectionName = np.array(X_test_sectionName)
+    
+    X_test_label_confidence = np.array(df_test['label_confidence'])
+    
+    X_test_isKeyCitation = pd.get_dummies(df_test['isKeyCitation'])
+    X_test_isKeyCitation = X_test_isKeyCitation.astype(int)
+    X_test_isKeyCitation = np.array(X_test_isKeyCitation)
+    X_test_isKeyCitation =  X_test_isKeyCitation[:,0]
+    
+    X_test_isKeyCitation = X_test_isKeyCitation.reshape(-1, 1)
+    X_test_label_confidence = X_test_label_confidence.reshape(-1, 1)
+    
+    X_test_other =  X_test_sectionName#np.hstack((X_test_sectionName)) #X_test_label_confidence,, X_test_isKeyCitation,X_test_label_confidence
+    
+    y_test = parse_label2index(df_test['label'])
     y_test = np.array(y_test)
     
-
-    y_test_pred = np.argmax(model.predict(x_test), axis=-1)
+    
+    y_pred_encoded = model.predict([X_test, X_test_other])
+    y_test_pred = np.argmax(y_pred_encoded, axis=1)
     macro_f1_score = f1_score(y_test, y_test_pred, average='macro')
     print(macro_f1_score)
     report = classification_report(y_test, y_test_pred)
