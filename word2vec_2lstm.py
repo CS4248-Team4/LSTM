@@ -139,6 +139,8 @@ def create_lstm_model(n1, n2, vector_size):
     # 文本输入（经过Word2Vec处理后的输入）
     text_input = Input(shape=(n1, vector_size), name='text_input')
     lstm_out = Bidirectional(LSTM(64, dropout=0.2, recurrent_dropout=0.2))(text_input)
+    #LSTM(64, dropout=0.2, recurrent_dropout=0.2)(text_input)
+    #
 
     # 分类输入（经过get_dummies处理的section names）
     section_input = Input(shape=(n2,), name='section_input')  # n2是get_dummies之后的列数
@@ -209,7 +211,8 @@ def main():
     df_train = Df_train[['string', 'sectionName', 'label','label_confidence','isKeyCitation']]
     df_test = Df_test[['string', 'sectionName', 'label','label_confidence','isKeyCitation']]
     
-    #df_train = df_train.dropna(subset=['label_confidence'])#, 'isKeyCitation'
+    #df_train = df_train.dropna(subset=['label_confidence', 'isKeyCitation'])#
+    #df_train.dropna(subset = 'isKeyCitation')
     
     all_categories = [
     "introduction", "results", "method", "discussion", "background", 
@@ -238,8 +241,9 @@ def main():
     X_train_isKeyCitation = X_train_isKeyCitation.reshape(-1, 1)
     X_train_label_confidence = X_train_label_confidence.reshape(-1, 1)
     
-    X_train_other =X_train_sectionName# np.hstack((X_train_sectionName))#,  X_train_isKeyCitation,X_train_label_confidence
-    
+    X_train_other =X_train_sectionName
+    #X_train_other =np.hstack((X_train_sectionName,X_train_isKeyCitation))#,  X_train_isKeyCitation,X_train_label_confidence
+    #,X_train_label_confidence
     y_train = parse_label2index(df_train['label'])
     y_train = np.array(y_train)
     
@@ -270,8 +274,10 @@ def main():
     
     X_test_isKeyCitation = X_test_isKeyCitation.reshape(-1, 1)
     X_test_label_confidence = X_test_label_confidence.reshape(-1, 1)
-    
-    X_test_other =  X_test_sectionName#np.hstack((X_test_sectionName)) #X_test_label_confidence,, X_test_isKeyCitation,X_test_label_confidence
+    #
+    X_test_other = X_test_sectionName
+    #X_test_other =np.hstack((X_test_sectionName,X_test_isKeyCitation)) #X_test_label_confidence,, X_test_isKeyCitation,X_test_label_confidence
+    #,X_test_label_confidence
     
     y_test = parse_label2index(df_test['label'])
     y_test = np.array(y_test)
