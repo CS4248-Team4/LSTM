@@ -49,20 +49,14 @@ def vectorise(texts, w2v_model, max_length):
     for text in texts:
         sentence_vectors = []
 
-        # 遍历句子中的每个词，最多到 max_length
         for word in text[:max_length]:
             if word in words:
-                # 如果词在模型的词汇表中，添加它的向量
                 sentence_vectors.append(w2v_model.wv[word])
             else:
-                # 否则，添加零向量
                 sentence_vectors.append(np.zeros(vector_size))
 
-        # 如果句子长度小于 max_length，用零向量填充剩余的部分
         for _ in range(max_length - len(sentence_vectors)):
             sentence_vectors.append(np.zeros(vector_size))
-
-        # 将句子的词向量列表添加到结果列表中
         texts_vec.append(sentence_vectors)
 
     return np.array(texts_vec)
@@ -71,8 +65,8 @@ def vectorise(texts, w2v_model, max_length):
 def process_strings(strings):
     returned = []
     for case in strings:
-        if not isinstance(case, str):  # 检查case是否为字符串
-            case = str(case)  # 不是字符串时转换为字符串
+        if not isinstance(case, str):  
+            case = str(case)  
         case = re.sub(r'\[[0-9, ]*\]', '', case)
         case = re.sub(r'^...', '... ', case)
         case = word_tokenize(case.lower())
@@ -116,43 +110,35 @@ def preprocess_sectionName(sectionName):
             newSectionName = "analysis"
         else:
             newSectionName = "unspecified"
-
         return newSectionName
-
-
 
 def parse_label2index(labels):
     index = []
     for i in range(len(labels)):
-        label = labels.iloc[i]  # 使用 iloc 获取第i个元素
+        label = labels.iloc[i] 
         if label == "background":
             index.append(0)
         elif label == "method":
             index.append(1)
-        else:  # 假设只有三种情况，第三种是 "result"
+        else: 
             index.append(2)
     return index
 
 
 
 def create_lstm_model(n1, n2, vector_size):
-    # 文本输入（经过Word2Vec处理后的输入）
     text_input = Input(shape=(n1, vector_size), name='text_input')
     lstm_out = Bidirectional(LSTM(64, dropout=0.2, recurrent_dropout=0.2))(text_input)
     #LSTM(64, dropout=0.2, recurrent_dropout=0.2)(text_input)
     #
 
-    # 分类输入（经过get_dummies处理的section names）
-    section_input = Input(shape=(n2,), name='section_input')  # n2是get_dummies之后的列数
+    section_input = Input(shape=(n2,), name='section_input')  # n2 after get_dummies
 
-    # 合并两个输入
     concatenated = Concatenate()([lstm_out, section_input])
 
-    # 全连接层
     dense1 = Dense(16, activation='relu')(concatenated)
-    output = Dense(3, activation='softmax')(dense1)  # 假设有三个分类输出
+    output = Dense(3, activation='softmax')(dense1)  # 3 class
 
-    # 构建并编译模型
     model = Model(inputs=[text_input, section_input], outputs=output)
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
@@ -170,11 +156,10 @@ class F1ScoreCallback(Callback):
         X_train, y_train = self.train_data
         X_val, y_val = self.val_data
         
-        # 预测
         y_train_pred = np.argmax(self.model.predict([X_train[0], X_train[1]]), axis=-1)
         y_val_pred = np.argmax(self.model.predict([X_val[0], X_val[1]]), axis=-1)
 
-        # 计算并存储F1分数
+        
         train_f1 = f1_score(y_train, y_train_pred, average='macro')
         val_f1 = f1_score(y_val, y_val_pred, average='macro')
         self.train_f1_scores.append(train_f1)
@@ -183,7 +168,7 @@ class F1ScoreCallback(Callback):
         print(f'Epoch {epoch+1} - train F1: {train_f1:.4f}, val F1: {val_f1:.4f}')
 
     def on_train_end(self, logs=None):
-        # 绘制训练过程中F1分数的趋势
+        
         plt.plot(self.train_f1_scores, label='Train F1')
         plt.plot(self.val_f1_scores, label='Validation F1')
         plt.title('F1 Score Trend')
@@ -249,7 +234,7 @@ def main():
     
     X_train, X_val,X_train_other,X_val_other, y_train, y_val = train_test_split(X_train, X_train_other,y_train, test_size=0.1, random_state=42)    
 
-    model = create_lstm_model(n1, X_train_other.shape[1], 100)  # 假设Word2Vec的向量大小为100
+    model = create_lstm_model(n1, X_train_other.shape[1], 100) 
     f1_callback = F1ScoreCallback(train_data=([X_train, X_train_other],y_train), val_data=([X_val, X_val_other],y_val))
     model.fit([X_train, X_train_other], y_train, epochs=20, batch_size=32, callbacks=[f1_callback])
     
